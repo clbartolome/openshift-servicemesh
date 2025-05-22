@@ -1,0 +1,40 @@
+---
+- name: Local deployment using Podman via shell
+  hosts: localhost
+  gather_facts: false
+  vars:
+    network_name: demo-net
+    image_name: demo-app:latest
+    app_dir: demo-app
+    jaeger_name: jaeger
+    jaeger_image: docker.io/jaegertracing/all-in-one:1.53
+    otlp_endpoint: http://jaeger:4318/v1/traces
+
+    apps:
+      - name: app-a
+      - name: app-b
+      - name: app-c
+      - name: app-d
+
+  tasks:
+
+    - name: Stop and Remove Jaeger container
+      shell: |
+        podman stop {{ jaeger_name }}
+        podman rm {{ jaeger_name }}
+      ignore_errors: true
+
+
+    - name: Stop and Remove demo app containers
+      shell: |
+        podman stop {{ item.name }}
+        podman rm {{ item.name }}
+      loop: "{{ apps }}"
+      loop_control:
+        label: "{{ item.name }}"
+      ignore_errors: true
+
+    - name: Delete podman network
+      shell: |
+        podman network rm {{ network_name }}
+      ignore_errors: false

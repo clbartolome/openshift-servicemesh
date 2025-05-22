@@ -1,0 +1,81 @@
+---
+- name: Local deployment using Podman via shell
+  hosts: localhost
+  gather_facts: false
+  vars:
+    network_name: demo-net
+    image_name: demo-app:latest
+    app_dir: demo-app
+    jaeger_name: jaeger
+    jaeger_image: docker.io/jaegertracing/all-in-one:1.53
+    otlp_endpoint: http://jaeger:4318/v1/traces
+
+    apps:
+      - name: app-a
+        port: 5001
+        env:
+          SERVICE_NAME: app-a
+          CALLS: app-b
+          ENABLE_TRACING: "true"
+          DELAY: "0.5"
+          JAEGER_ENDPOINT: "{{ otlp_endpoint }}"
+      - name: app-b
+        port: 5002
+        env:
+          SERVICE_NAME: app-b
+          CALLS: app-c,app-d
+          DELAY: "1.5"
+          ENABLE_TRACING: "true"
+          JAEGER_ENDPOINT: "{{ otlp_endpoint }}"
+      - name: app-c
+        port: 5003
+        env:
+          SERVICE_NAME: app-c
+          DELAY: "1"
+          ENABLE_TRACING: "true"
+          JAEGER_ENDPOINT: "{{ otlp_endpoint }}"
+      - name: app-d
+        port: 5004
+        env:
+          SERVICE_NAME: app-d
+          VERSION: v1
+          DELAY: "3"
+          ENABLE_TRACING: "true"
+          JAEGER_ENDPOINT: "{{ otlp_endpoint }}"
+
+  tasks:
+
+    - name: Create podman network (if not exists)
+      shell: |
+        podman network inspect {{ network_name }} >/dev/null 2>&1 || podman network create {{ network_name }}
+      changed_when: false
+
+    - name: Build demo-app container image
+      shell: |
+        podman build -t {{ image_name }} .
+      args:
+        chdir: "{{ app_dir }}"
+
+    - name: Run Jaeger container
+      shell: |
+        podman rm -f {{ jaeger_name }} >/dev/null 2>&1 || true
+        podman run -d --name {{ jaeger_name }} \
+          --network {{ network_name }} \
+          -p 16686:16686 -p 4318:4318 \
+          {{ jaeger_image }}
+      changed_when: true
+
+    - name: Run demo app containers
+      shell: |
+        podman rm -f {{ item.name }} >/dev/null 2>&1 || true
+        podman run -d --name {{ item.name }} \
+          --network {{ network_name }} \
+          -p {{ item.port }}:5000 \
+          {% for key, value in item.env.items() -%}
+            -e {{ key }}="{{ value }}" \
+          {% endfor -%}
+          {{ image_name }}
+      loop: "{{ apps }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: true
